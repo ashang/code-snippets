@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+#
+# lddsafe - Safely print shared library dependencies (similar to ldd).
+# Author: Ricardo Garcia Gonzalez.
+# Author: Ivan Mironov.
+# License: Public domain code.
+#
+
+# Better for grep and expected output of other tools.
+export LANG=C
+
+# Expand globs to nothing when no match is found.
+shopt -s nullglob
+
+# Print error and exit.
+die()
+{
+	echo "ERROR: $1" 1>&2
+	exit 1
+}
+
+# Find required program.
+findexec()
+{
+	which "$1" >/dev/null 2>/dev/null || die "$1 not found"
+}
+
+# Check file exists and is readable.
+checkreadable()
+{
+	[ -r "$1" ] || die "$1 missing or not readable"
+}
+
+# Check for bash version.
+[ -n "$BASH_VERSION" ] || die "Bash required"
+[ ${BASH_VERSINFO[0]} -ge 4 ] || die "Bash version 4 or later required"
+
+# Check needed programs.
+findexec objdump
+findexec readelf
+findexec dirname
+findexec sed
+
+# Check needed files.
+checkreadable /etc/ld.so.conf
+
+# Check arguments.
+[ "$1" == "-n" ] && recursive=0 || recursive=1
+[ "$1" == "-n" ] && shift
+if [ $# -eq 0 ]; then
+	echo "Usage: $( basename $0 ) [-n] FILE..." 2>&1
+	exit 1
+fi
+for arg in "$@"; do
+	checkreadable "$1"
+done
+
+# Recursively print the list of files included from /etc/ld.so.conf.
+ld_so_conf_deps()
+{
+	echo "$1"
+	dirname="$( dirname "$1" )"
+	patterns="$( sed -n 's/^include[\ \t]\+\(.\+\)$/\1/p' "$1" )"
+	set -o noglob
+	for pattern in $patterns; do
+		set +o noglob
+		case $pattern in
+			/*)
+				for file in $pattern; do
+					ld_so_conf_deps "$file"
+				done
+				;;
+			*)
+				for file in $dirname/$pattern; do
+					ld_so_conf_deps "$file"
+				done
+				;;
+		esac
+	done
+	set +o noglob
+}
+
+# Additional library directories.
+LD_LIBRARY_PATH_LIBS="${LD_LIBRARY_PATH//:/ }"
+MORELIBDIRS="$( sed '/^include[\ \t]/d' $( ld_so_conf_deps /etc/ld.so.conf ) )"
+
+# Search for a given library name.
+searchlib()
+{
+	found=0
+	for libdir in $LIBDIRS; do
+		path="$libdir"/"$1"
+		if [ -r "$path" ]; then
+			found=1
+			break
+		fi
+	done
+	[ $found -eq 1 ] && echo "$path"
+}
+
+# Already visited libraries.
+declare -A VISITEDLIBS
+
+# Print dependency results, recursively.
+recursivedeps()
+{
+	for lib in $( objdump -p "$1" | \
+		      sed -n 's,^ *NEEDED \+\([^ ]\+\) *$,\1,p' ); do
+		if [ ! "${VISITEDLIBS[$lib]}" ]; then
+			VISITEDLIBS["$lib"]=1
+			file=`searchlib "$lib"`
+			if [ "$file" ]; then
+				echo "	$lib => $file"
+				[ $recursive -eq 1 ] && recursivedeps "$file"
+			else
+				echo "	$lib => not found"
+			fi
+		fi
+	done
+}
+
+# Search symbol names in library directories.
+for arg in "$@"; do
+	# Print file name when more than one file given.
+	[ $# -gt 1 ] && echo "${arg}:"
+
+	# Set appropriate library search directories.
+	class=$( readelf -h $arg 2>/dev/null | \
+		 sed -n 's/^[ \t]*Class:[\ \t]\+\(.\+\)/\1/p' )
+	if [ -z "$class" ]; then
+		echo "$arg: not an ELF file" 2>&1
+		continue
+	fi
+	if [ $class != ELF32 -a $class != ELF64 ]; then
+		echo "$arg: unknown ELF format" 2>&1
+		continue
+	fi
+	if [ $class == ELF64 ]; then
+		if [ -d /lib64 ]; then
+			stdlibs="/lib64 /usr/lib64"
+		else
+			stdlibs="/lib /usr/lib"
+		fi
+	else # $class == ELF32
+		if [ -d /lib32 ]; then
+			stdlibs="/lib32 /usr/lib32"
+		else
+			stdlibs="/lib /usr/lib"
+		fi
+	fi
+	LIBDIRS="$LD_LIBRARY_PATH_LIBS $MORELIBDIRS $stdlibs"
+
+	# Get a unique list of library dependencies for this argument.
+	unset VISITEDLIBS
+	declare -A VISITEDLIBS
+	recursivedeps "$arg"
+done
+exit 0
