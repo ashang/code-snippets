@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+#
+# Wuala loader
+
+if [ -z "$JAVA" ]; then
+	JAVA=`which java`
+fi
+JAVA_OPTS="-ea -Xmx256m"
+WUALA_LOADER="$HOME/wuala/loader2.jar"
+LOCK_FILE="/var/lock/wuala"
+
+
+
+function displayHelp() {
+	echo "\
+Wuala CLI v0.2010-04-19
+
+Usage:
+
+wuala gui
+  Launches Wuala GUI.
+
+wuala start
+  Start Wuala daemon. Note that you'll have to login to your account to access
+  your files.
+
+wuala login [ <username> [ <password> ] ]
+  Log in into existing Wuala account. If user name or password are not provided,
+  they will be prompted.
+
+wuala commands
+  Display list of native commands. Wuala daemon will be started if not running.
+
+wuala upgrade
+  Upgrades Wuala if newer version is available. If currently running, Wuala
+  will be restarted. You will have to log in again after upgrading is finished.
+
+wuala logout
+  Log out from Wuala.
+
+wuala ( exit | shutdown | stop )
+  Stop currently running Wuala daemon.
+
+wuala ( help | -help | --help )
+  View help (you are reading it now).
+"
+}
+
+function startWuala() {
+	if [ -e $LOCK_FILE ]; then
+		echo "Wuala already started."
+	else
+		echo "Starting Wuala..."
+		$JAVA $JAVA_OPTS -jar $WUALA_LOADER -installed -nogui 2>&1 &
+		[ $? -eq 0 ] && touch $LOCK_FILE
+	fi
+}
+
+function stopWuala() {
+	if [ -e $LOCK_FILE ]; then
+		echo "Stopping Wuala..."
+		$JAVA $JAVA_OPTS -jar $WUALA_LOADER -installed -nogui exit
+		rm -f $LOCK_FILE
+	else
+		echo "Wuala not started, nothing to stop."
+	fi
+}
+
+function upgradeWuala() {
+	echo "Upgrading Wuala..."
+	# Start Wuala, load newest version if available
+	$JAVA $JAVA_OPTS -jar $WUALA_LOADER -nogui 2>&1 &
+	sleep 10
+
+	echo "Stopping Wuala..."
+	# Stop Wuala
+	$JAVA $JAVA_OPTS -jar $WUALA_LOADER -nogui exit
+	sleep 10
+}
+
+function wualaCommand() {
+	if [ -e $LOCK_FILE ]; then
+		$JAVA $JAVA_OPTS -jar $WUALA_LOADER -installed -nogui "$@"
+	else
+		echo "Wuala not started."
+	fi
+}
+
+
+
+# If called with no parameters, display help and exit
+if [ $# -lt 1 ]; then
+	displayHelp
+	exit 0
+fi
+
+# If called with `[[-]-]help` parameter, display help and exit
+if [ $1 == "help" -o $1 == "-help" -o $1 == "--help" ]; then
+	displayHelp
+	exit 0
+fi
+
+
+
+# Start Wuala GUI version
+if [ $1 == "gui" ]; then
+	$JAVA $JAVA_OPTS -jar $WUALA_LOADER -installed 2>&1 &
+	exit 0
+fi
+
+# Start Wuala command-line version
+if [ $1 == "start" ]; then
+	startWuala
+	exit 0
+fi
+
+# Stop Wuala
+if [ $1 == "stop" -o $1 == "exit" -o $1 == "shutdown" ]; then
+	stopWuala
+	exit 0
+fi
+
+# Upgrade Wuala
+if [ $1 == "upgrade" ]; then
+	if [ -e $LOCK_FILE ]; then
+		stopWuala
+		upgradeWuala
+		startWuala
+	else
+		upgradeWuala
+	fi
+	exit 0
+fi
+
+# If called with `commands`, display list of native commands
+if [ $1 == "commands" ]; then
+	wualaCommand help
+	exit 0
+fi
+
+# Log in
+if [ $1 == "login" ]; then
+	if [ ! -e $LOCK_FILE ]; then
+		echo "Wuala not started."
+		exit 0
+	fi
+
+	# Get login
+	if [ $# -ge 2 ]; then
+		LOGIN=$2
+	else
+		echo "Enter username:"
+		read LOGIN
+	fi
+
+	# Get password
+	if [ $# -ge 3 ]; then
+		PASSW=$3
+	else
+		echo "Enter password for $LOGIN:"
+		read PASSW
+	fi
+
+	# Sign in
+	wualaCommand login $LOGIN $PASSW
+	exit 0
+fi
+
+
+
+# Other parameters -- feed directly to Wuala launcher
+wualaCommand $@
+
