@@ -1,4 +1,5 @@
 ## Build generated
+*.out
 build/
 
 ## Various settings
