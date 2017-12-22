@@ -1,6 +1,8 @@
 ## Build generated
 *.out
 build/
+*~
+*.pyc
 
 ## Various settings
 *.xcuserstate
