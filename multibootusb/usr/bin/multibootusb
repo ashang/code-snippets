@@ -1,0 +1,203 @@
+#!/usr/bin/python3
+# -*- coding: utf-8 -*-
+# Name:     multibootusb
+# Purpose:  Main file which will determine if cli or gui is to be opened
+# Authors:  Sundar
+# Licence:  This file is a part of multibootusb package. You can redistribute it or modify
+#           under the terms of GNU General Public License, version 2 or above.
+import os
+import getopt
+import sys
+import platform
+
+# The following line is required for distros based on rpm so as to avoid import errors when running from
+# installed system
+sys.path.append('/usr/local/lib/python3.4/dist-packages')
+sys.path.append('/usr/local/lib/python3.5/dist-packages')  # for version 8.9.0 onwards
+
+# Ensure that above issue doesn't occur on debian based distro as well
+if '/usr/lib/python3/dist-packages/scripts/' not in sys.path:
+    sys.path.append('/usr/lib/python3/dist-packages/scripts/')
+
+# Had trouble in importing scripts directory. Had to add few lines below to ensure it works on source as well as
+# post install
+try:
+    from scripts.mbusb_cli import *
+    from scripts import admin
+    from scripts import gen
+    from scripts import config
+except:
+    try:
+        from .scripts.mbusb_cli import *
+        from .scripts import admin
+        from .scripts import gen
+        from .scripts import config
+    except:
+        import scripts
+
+gui = True
+uninstall = False
+
+
+def running_from():
+    """
+    Print version and path location (installed or source code) info for debugging later.
+    """
+    if os.path.exists('scripts'):
+        gen.log('Running multibootusb version ' + gen.mbusb_version() + ' from source...')
+    else:
+        gen.log('Running multibootusb version ' + gen.mbusb_version() + ' from installed system...')
+
+
+def usage():
+    print('''
+An advanced multiboot live usb creator which can be used from the command line
+or via a GUI.
+
+Usage: python3 multibootusb [option(s)]
+
+Options:
+  -h or --help        :   Print this help message and exit
+  -c or --command     :   Invoke command line usage.  This option is required;
+                          if omitted, the GUI will be launched.
+  -i or --iso         :   Path to ISO file(s).  If many ISOs are supplied,
+                          they should be separated by ',' with no spaces in
+                          between.
+  -t or --target      :   Path to target USB device partition (e.g. "/dev/sdb1").
+  -y or --yes         :   Default yes for user input during install.
+                          Will not wait for user.
+  -u or --uninstall   :   List and uninstall distro from an USB disk.
+  -r or --raw         :   Write ISO image diretly to USB disk. Will destroy data.
+  -s or --syslinux    :   Install syslinux to target USB disk default directory.
+  -d or --debug       :   Enable debug messages (very verbose!)
+
+Example for making a bootable USB from the command line:
+
+    Linux:
+        python3 multibootusb -c -i ../../favourite.iso -t /dev/sdb1
+
+    Windows:
+        python3 multibootusb -c -i ../../favourite.iso -t G:
+
+Example for uninstalling a distro from a USB:
+
+    Linux:
+        python3 multibootusb -c -u -t /dev/sdb1
+
+    Windows:
+        python3 multibootusb -c -u -t G:
+
+Example for installing multiple distros without user intervention:
+
+    Linux:
+        python3 multibootusb -c -y -i ../../favourite.iso,../../other-distro.iso -t /dev/sdb1
+
+    Windows:
+        python3 multibootusb -c -y -i ../../favourite.iso,../../other-distro.iso -t G:
+        
+Example for writing ISO image to target USB disk (will destroy data on USB disk):
+
+    Linux:
+        python3 multibootusb -c -r -i ../../favourite.iso -t /dev/sdb
+
+    Windows:
+        python3 multibootusb -c -r -i ../../favourite.iso -t G:
+
+Example for installing syslinux to target USB disk:
+
+    Linux:
+        python3 multibootusb -c -s -t /dev/sdb1
+
+    Windows:
+        python3 multibootusb -c -s -t G:
+''')
+    sys.exit(2)
+
+
+def start_gui():
+    from scripts import mbusb_gui
+    gen.log('Starting multibootusb GUI...')
+    if platform.system() == 'Linux':
+        if os.getuid() != 0:
+            gen.log('\n\nAdmin privilege is required to run multibootusb.\n If you are running from source try '
+                  '\'sudo python3 ./multibootusb\'\n or you can try \'multibootusb-pkexec\' (post install)\n\n',
+                    info=False, debug=True)
+    mbusb_gui.main_gui()
+
+
+if __name__ == '__main__':
+    if platform.system() == 'Windows':
+        if not admin.isUserAdmin():
+            admin.runAsAdmin()
+            sys.exit(0)
+    try:
+        opts, args = getopt.getopt(sys.argv[1:], 'i:t:yvhcudrs',
+                                   ['iso=', 'target=', 'yes', 'version', 'help', 'command', 'uninstall', 'debug',
+                                    'raw', 'syslinux'])
+    except getopt.GetoptError:
+        usage()
+        sys.exit(2)
+    for opt, arg in opts:
+        if opt in ('-h', '--help'):
+            usage()
+            sys.exit(2)
+        elif opt in ('-v', '--version'):
+            print_version()
+            sys.exit()
+        elif opt in ('-i', '--iso'):
+            if ',' not in arg:
+                config.image_path = arg
+            else:
+                config.image_path = arg.split(',')
+        elif opt in ('-t', '--target'):
+            config.usb_disk = arg
+        elif opt in ('-c', '--command'):
+            gui = False
+        elif opt in ('-u', '--uninstall'):
+            uninstall = True
+        elif opt in ('-d', '--debug'):
+            config.debug = True
+        elif opt in ('-y', '--yes'):
+            config.yes = True
+        elif opt in ('-r', '--raw'):
+            config.cli_dd = True
+        elif opt in ('-s', '--syslinux'):
+            config.cli_syslinux = True
+        else:
+            gui = True
+            #start_gui()
+            '''
+            usage()
+            sys.exit()
+            '''
+
+if config.debug is True:
+    from scripts.debug import colors
+    log(colors.HEADER + "=== DEBUG ENABLED ===")
+
+
+if gui is False:
+    check_admin()
+    if uninstall is True and config.usb_disk is not '':
+        cli_uninstall_distro()
+    elif uninstall is True and config.usb_disk is '':
+        log('\nYou must provide \'-t\' option to point to your USB disk for uninstalling a distro.\n'
+            'See the usage example below.')
+        usage()
+    elif config.image_path is '' and config.usb_disk is '':
+        log('\nNo option provided. See the usage below.')
+        usage()
+    elif config.cli_syslinux is True and config.usb_disk is not '':
+        cli_install_syslinux()
+    elif config.image_path is '' or config.usb_disk is '':
+        log('\nOptions \'-i\' and \'-t\' must be supplied together. See the usage below.')
+        usage()
+    elif config.cli_dd is True:
+        cli_dd()
+    else:
+        running_from()
+        cli_install_distro()
+
+elif gui is True:
+    running_from()
+    start_gui()
